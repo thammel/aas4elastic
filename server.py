@@ -9,5 +9,5 @@ application = WSGIApp(object_store=store, file_store=DictSupplementaryFileContai
 
 if __name__ == "__main__":
     from werkzeug.serving import run_simple
-    run_simple("localhost", 8081, application)
+    run_simple("localhost", 80, application)
 
