@@ -28,7 +28,7 @@ services:
     build: .
     container_name: aas-server
     ports:
-      - "4001:4001"
+      - "8081:80"
     environment:
       - PYTHONUNBUFFERED=1
       - NEO4J_URI=bolt://neo4j:7687

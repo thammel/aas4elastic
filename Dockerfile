@@ -12,7 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY aas_mapping/ ./aas_mapping/
 COPY server.py .
 
-EXPOSE 4001
+EXPOSE 8081:80
 
 ENV PYTHONUNBUFFERED=1
 
