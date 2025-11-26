@@ -44,7 +44,7 @@ jobs:
           docker inspect --format='{{.State.Running}}' aas-server | grep true
       - name: Run AAS Test Engines compliance check
         run: |
-          FILTER=$(tr -d '\n' < ../aas_test_engines_filter.txt)
+          FILTER=$(tr -d '\n' < ./aas_test_engines_filter.txt)
           aas_test_engines check_server \
             http://localhost:4001 \
             https://admin-shell.io/aas/API/3/0/AssetAdministrationShellRepositoryServiceSpecification/SSP-002 \
