@@ -32,7 +32,7 @@ jobs:
           context: .
           file: Dockerfile
           push: false
-          tags: basyx-python-server
+          tags: aas-server
           cache-from: type=gha
           cache-to: type=gha,mode=max
           load: true
@@ -42,13 +42,13 @@ jobs:
       - name: Wait for container and server initialization
         run: |
           timeout 30s bash -c '
-            until docker logs basyx-python-server 2>&1 | grep -q "INFO success: quit_on_failure entered RUNNING state"; do
+            until docker logs aas-server 2>&1 | grep -q "INFO success: quit_on_failure entered RUNNING state"; do
               sleep 2
             done
           '
       - name: Check if container is running
         run: |
-          docker inspect --format='{{.State.Running}}' basyx-python-server | grep true
+          docker inspect --format='{{.State.Running}}' aas-server | grep true
       - name: Run AAS Test Engines compliance check
         run: |
           FILTER=$(tr -d '\n' < ../etc/scripts/aas_test_engines_filter.txt)
@@ -66,4 +66,4 @@ jobs:
       - name: Stop and remove the container
         if: always()
         run: |
-          docker stop basyx-python-server && docker rm basyx-python-server
+          docker stop aas-server && docker rm aas-server && docker stop neo4j-db && docker rm neo4j-db
