@@ -1,0 +1,3 @@
+basyx-python-sdk
+neo4j
+pytest
