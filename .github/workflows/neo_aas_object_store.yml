@@ -39,13 +39,6 @@ jobs:
       - name: Run container
         run: |
           docker compose up --build -d
-      - name: Wait for container and server initialization
-        run: |
-          timeout 30s bash -c '
-            until docker logs aas-server 2>&1 | grep -q "aas-server  |  * Running on"; do
-              sleep 2
-            done
-          '
       - name: Check if container is running
         run: |
           docker inspect --format='{{.State.Running}}' aas-server | grep true
