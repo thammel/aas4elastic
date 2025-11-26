@@ -38,7 +38,7 @@ jobs:
           load: true
       - name: Run container
         run: |
-          docker-compose up --build -d
+          docker compose up --build -d
       - name: Wait for container and server initialization
         run: |
           timeout 30s bash -c '
