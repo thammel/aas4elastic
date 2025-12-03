@@ -46,7 +46,7 @@ jobs:
         run: |
           FILTER=$(tr -d '\n' < ./aas_test_engines_filter.txt)
           aas_test_engines check_server \
-            http://localhost:8081/api/v3.0 \
+            http://localhost:8080/api/v3.0 \
             https://admin-shell.io/aas/API/3/0/AssetAdministrationShellRepositoryServiceSpecification/SSP-002 \
             --filter "$FILTER" \
             --output html > result.html
