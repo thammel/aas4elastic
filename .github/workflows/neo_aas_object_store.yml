@@ -56,6 +56,13 @@ jobs:
         with:
           name: aas-test-results
           path: result.html
+      - name: Show server logs if test failed
+        if: failure()
+        run: |
+          echo "===== AAS Server Logs ====="
+          docker logs aas-server
+          echo "===== Neo4j Logs ====="
+          docker logs neo4j-db
       - name: Stop and remove the container
         if: always()
         run: |
