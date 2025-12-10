@@ -42,6 +42,13 @@ jobs:
       - name: Check if container is running
         run: |
           docker inspect --format='{{.State.Running}}' aas-server | grep true
+      - name: Wait for AAS server to be ready
+        run: |
+          timeout 30s bash -c '
+            until docker logs aas-server 2>&1 | grep -q "* Running on"; do
+              sleep 2
+            done
+          '
       - name: Run AAS Test Engines compliance check
         run: |
           FILTER=$(tr -d '\n' < ./aas_test_engines_filter.txt)
