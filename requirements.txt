@@ -1,2 +1,2 @@
-basyx-python-sdk
+basyx-python-sdk==1.2.1
 neo4j
