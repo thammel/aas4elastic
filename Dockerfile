@@ -6,7 +6,7 @@ RUN apt-get update && apt-get install -y \
     gcc \
     && rm -rf /var/lib/apt/lists/*
 
-COPY project.toml .
+COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
 COPY aas_mapping/ ./aas_mapping/
