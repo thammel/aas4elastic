@@ -21,8 +21,8 @@ jobs:
           pip install aas-test-engines
       - name: Prepare test data
         run: |
-          mkdir -p aas_mapping/test/aas_test_engines/input
-          curl -L -o aas_mapping/test/aas_test_engines/input/TestDataWithThumbnail.aasx \
+          mkdir -p aas_mapping/test/aas-test-engines/input
+          curl -L -o aas_mapping/test/aas-test-engines/input/TestDataWithThumbnail.aasx \
           https://media.githubusercontent.com/media/admin-shell-io/aas-test-engines/main/bin/check_servers/test_data/TestDataWithThumbnail.aasx
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -30,7 +30,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: aas_mapping/test/aas_test_engines/Dockerfile
+          file: aas_mapping/test/aas-test-engines/Dockerfile
           push: false
           tags: aas-server
           cache-from: type=gha
@@ -38,7 +38,7 @@ jobs:
           load: true
       - name: Run container
         run: |
-          docker compose -f aas_mapping/test/aas_test_engines/compose.yml up --build -d
+          docker compose -f aas_mapping/test/aas-test-engines/compose.yml up --build -d
       - name: Check if container is running
         run: |
           docker inspect --format='{{.State.Running}}' aas-server | grep true
