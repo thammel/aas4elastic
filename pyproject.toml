@@ -4,6 +4,7 @@ version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "basyx-python-sdk==1.2.1",
+    "basyx-python-server @ git+https://github.com/eclipse-basyx/basyx-python-sdk.git@main#subdirectory=server/app",
+    "basyx-python-sdk",
     "neo4j"
 ]

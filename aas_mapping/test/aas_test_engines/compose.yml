@@ -26,7 +26,7 @@ services:
 
   aas-server:
     build:
-      context: .
+      context: ../../..
       dockerfile: aas_mapping/test/aas_test_engines/Dockerfile
     container_name: aas-server
     ports:
