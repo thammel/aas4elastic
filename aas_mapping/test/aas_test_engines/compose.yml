@@ -41,8 +41,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
-      - ./aas_mapping/test/aas_test_engines/data:/app/data
-      - ./aas_mapping/test/aas_test_engines/input:/input
+      - ./data:/app/data
+      - ./input:/input
 
 volumes:
   neo4j_data:
