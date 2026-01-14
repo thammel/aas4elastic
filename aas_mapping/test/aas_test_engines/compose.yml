@@ -25,7 +25,9 @@ services:
       retries: 5
 
   aas-server:
-    build: .
+    build:
+      context: .
+      dockerfile: aas_mapping/test/aas_test_engines/Dockerfile
     container_name: aas-server
     ports:
       - "8080:80"
@@ -39,8 +41,8 @@ services:
         condition: service_healthy
     restart: unless-stopped
     volumes:
-      - ./data:/app/data
-      - ./input:/input
+      - ./aas_mapping/test/aas_test_engines/data:/app/data
+      - ./aas_mapping/test/aas_test_engines/input:/input
 
 volumes:
   neo4j_data:

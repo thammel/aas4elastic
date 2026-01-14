@@ -10,10 +10,9 @@ COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 
 COPY aas_mapping/ ./aas_mapping/
-COPY server.py .
 
-EXPOSE 8080
+EXPOSE 80
 
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "server.py"]
+CMD ["python", "aas_mapping.test.aas_test_engines.server.py"]
