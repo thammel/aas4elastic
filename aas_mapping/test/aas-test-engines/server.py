@@ -5,8 +5,9 @@ from basyx.aas.adapter.aasx import DictSupplementaryFileContainer
 from basyx.aas.adapter.aasx import AASXReader
 from aas_mapping.aas_neo4j_adapter.neo_aas_object_store import Neo4jObjectStore
 from aas_mapping.aas_neo4j_adapter.aas_neo4j_client import AASNeo4JClient
+from aas_mapping.aas_neo4j_adapter.aas_neo4j_client import AAS_NEO4J_MODEL_CONFIG
 
-client = AASNeo4JClient(uri="bolt://neo4j:7687", user="neo4j", password="12345678")
+client = AASNeo4JClient(uri="bolt://neo4j:7687", user="neo4j", password="12345678", model_config=AAS_NEO4J_MODEL_CONFIG)
 obj_store = Neo4jObjectStore(client=client)
 file_store = DictSupplementaryFileContainer()
 
