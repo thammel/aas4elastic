@@ -24,6 +24,8 @@ AASd-125  ModelReference following keys must be in FragmentKeys
 AASd-126  FragmentReference must only appear as the last key in a ModelReference
 AASd-127  FragmentReference key must be preceded by File or Blob
 AASd-128  Key value after SubmodelElementList key must be a numeric string
+AASd-090  DataElement category must be CONSTANT, PARAMETER, or VARIABLE (V3.0 only, skipped for V3.1)
+AASd-120  idShort of SubmodelElementList direct children must not be specified (V3.0 only, skipped for V3.1)
 AASd-129  SubmodelElement with TemplateQualifier must be under a Template Submodel
 AASd-131  AssetInformation must have globalAssetId or at least one specificAssetId
 AASd-133  SpecificAssetId/externalSubjectId must be an ExternalReference
@@ -48,7 +50,6 @@ identical References share one Neo4j node, so same identity ⟺ same semantic co
 
 import re
 from dataclasses import dataclass, field
-from typing import Optional
 
 from aas_mapping.aas_neo4j_adapter.base import BaseNeo4JClient
 
@@ -123,6 +124,9 @@ class ConstraintReport:
 # Checker
 # ---------------------------------------------------------------------------
 
+# Constraints that only apply to AAS V3.0 and are skipped for V3.1+
+_V30_ONLY_CONSTRAINTS: frozenset[str] = frozenset({"AASd-090", "AASd-120"})
+
 # Maps constraint ID → name of the private method that checks it
 _CHECKER_METHODS: dict[str, str] = {
     "AASd-002": "_check_aasd002",
@@ -147,6 +151,8 @@ _CHECKER_METHODS: dict[str, str] = {
     "AASd-127": "_check_aasd127",
     "AASd-128": "_check_aasd128",
     "AASd-129": "_check_aasd129",
+    "AASd-090": "_check_aasd090",
+    "AASd-120": "_check_aasd120",
     "AASd-131": "_check_aasd131",
     "AASd-133": "_check_aasd133",
     "AASd-134": "_check_aasd134",
@@ -167,12 +173,21 @@ class AASConstraintChecker:
         print(report.summary())
     """
 
-    def __init__(self, client: BaseNeo4JClient):
+    def __init__(self, client: BaseNeo4JClient, version: str | None = None):
         self._client = client
+        self._version = version
 
     def check_all(self) -> ConstraintReport:
-        """Run all implemented constraints and return a combined report."""
-        return self.check(list(_CHECKER_METHODS.keys()))
+        """Run all implemented constraints and return a combined report.
+
+        Constraints in ``_V30_ONLY_CONSTRAINTS`` are skipped when *version* is ``"3.1"``
+        and run normally for all other versions (including ``"3.0"`` and unspecified).
+        """
+        constraint_ids = [
+            cid for cid in _CHECKER_METHODS
+            if not (self._version == "3.1" and cid in _V30_ONLY_CONSTRAINTS)
+        ]
+        return self.check(constraint_ids)
 
     def check(self, constraint_ids: list[str]) -> ConstraintReport:
         """Run only the specified constraints.
@@ -810,6 +825,59 @@ class AASConstraintChecker:
                 node_id=r["node_id"],
                 node_labels=list(r["node_labels"]),
                 id_short=r["id_short"],
+            )
+            for r in self._run(query)
+        ]
+
+    # ------------------------------------------------------------------
+    # AASd-090 — DataElement category must be CONSTANT, PARAMETER, or VARIABLE
+    # (V3.0 only — skipped for V3.1)
+    # ------------------------------------------------------------------
+
+    def _check_aasd090(self) -> list[ConstraintViolation]:
+        """category of DataElements must be one of CONSTANT, PARAMETER, VARIABLE (default: VARIABLE)."""
+        query = """
+        MATCH (n:DataElement)
+        WHERE n.category IS NOT NULL
+          AND NOT n.category IN ["CONSTANT", "PARAMETER", "VARIABLE"]
+        RETURN elementId(n) AS node_id, labels(n) AS node_labels,
+               n.idShort AS id_short, n.category AS category
+        """
+        return [
+            self._v(
+                "AASd-090",
+                f"DataElement category {r['category']!r} is not one of CONSTANT, PARAMETER, VARIABLE",
+                node_id=r["node_id"],
+                node_labels=list(r["node_labels"]),
+                id_short=r["id_short"],
+                category=r["category"],
+            )
+            for r in self._run(query)
+        ]
+
+    # ------------------------------------------------------------------
+    # AASd-120 — idShort of SubmodelElementList children must not be specified
+    # (V3.0 only — skipped for V3.1)
+    # ------------------------------------------------------------------
+
+    def _check_aasd120(self) -> list[ConstraintViolation]:
+        """idShort of SubmodelElements that are direct children of a SubmodelElementList must not be set."""
+        query = """
+        MATCH (list:SubmodelElementList)-[:value]->(child:SubmodelElement)
+        WHERE child.idShort IS NOT NULL
+        RETURN elementId(child) AS node_id, labels(child) AS node_labels,
+               child.idShort AS id_short, elementId(list) AS list_node_id,
+               list.idShort AS list_id_short
+        """
+        return [
+            self._v(
+                "AASd-120",
+                f"SubmodelElementList child has idShort {r['id_short']!r} but idShort must not be specified",
+                node_id=r["node_id"],
+                node_labels=list(r["node_labels"]),
+                id_short=r["id_short"],
+                list_node_id=r["list_node_id"],
+                list_id_short=r["list_id_short"],
             )
             for r in self._run(query)
         ]
