@@ -277,7 +277,8 @@ def _convert_attribute_elements(attribute: str, last_root: str, mapping: dict[st
                 if "[]" in part:
                     match_part += f"-[:specificAssetIds]->(specificAssetIds{mapping['specificAssetIds']})"
                 else:
-                    match_part += f"-[:specificAssetIds {{list_index: {part[part.index("[") + 1: part.index("]")]}}}]->(specificAssetIds{mapping['specificAssetIds']})"
+                    list_index = part[part.index("[") + 1: part.index("]")]
+                    match_part += f"-[:specificAssetIds {{list_index: {list_index}}}]->(specificAssetIds{mapping['specificAssetIds']})"
                 last_root = f"specificAssetIds{mapping['specificAssetIds']}"
                 mapping["specificAssetIds"] += 1
             case _:
