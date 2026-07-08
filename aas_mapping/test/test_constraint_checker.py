@@ -115,7 +115,13 @@ def test_valid_environment_has_no_violations(aas_client):
     client.upload_json(_VALID_ENV)
     report = AASConstraintChecker(client).check_all()
     assert report.is_compliant(), f"Expected no violations, got:\n{report.summary()}"
-    assert len(report.checked_constraints) == 25
+    assert len(report.checked_constraints) == 27
+    # V3.0-only constraints are skipped when the checker is told the data is V3.1.
+    report_31 = AASConstraintChecker(client, version="3.1").check_all()
+    assert report_31.is_compliant()
+    assert len(report_31.checked_constraints) == 25
+    assert "AASd-090" not in report_31.checked_constraints
+    assert "AASd-120" not in report_31.checked_constraints
 
 
 # ---------------------------------------------------------------------------
