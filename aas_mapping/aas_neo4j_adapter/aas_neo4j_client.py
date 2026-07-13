@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import re
 from typing import Dict, List, Optional, Set, Tuple, Any
@@ -119,27 +120,43 @@ AAS_NEO4J_MODEL_CONFIG = Neo4jModelConfig(
 class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
     node_names: Set[str] = set()
 
-    # Identifiable ids already stored in the DB or queued by this client's uploads.
-    # None means "reload from the DB on next use" (initial state, and after _remove_all).
-    # Backs the duplicate-Identifiable skip in _process_json_data: per the AAS spec an
+    # Duplicate-Identifiable handling for environment imports. Per the AAS spec an
     # Identifiable id is globally unique, so a re-occurrence of an id across (or within)
-    # environment files is the *same* Identifiable and must not be stored twice — the
-    # identifiable_id uniqueness constraint would reject the second node anyway. Skipping
-    # at the environment level drops the whole duplicate subtree (first occurrence wins);
-    # References to the id keep resolving to the canonical node.
+    # environment files is either the *same* Identifiable re-emitted (e.g. a shared
+    # ContactInformation submodel referenced by every shell of a manufacturer) or an
+    # id collision (two different objects wrongly sharing an id — e.g. placeholder ids
+    # like 'https://example.com/ids/Submodel/…' reused per product). Without this,
+    # the second occurrence hits the identifiable_id uniqueness constraint and aborts
+    # the whole upload.
+    #
+    #   - identical content  -> skip the duplicate subtree (first occurrence wins);
+    #                           References keep resolving to the canonical node.
+    #   - different content  -> id collision: store under '<id>__collision-<n>' with
+    #                           `original_id` and `id_collision` properties, so the
+    #                           data stays analyzable and the violation is queryable.
+    #                           References to the id resolve to the first node only.
+    #
+    # _uploaded_identifiable_ids: ids known to be stored. None means "reload from the
+    # DB on next use" (initial state, and after _remove_all).
+    # _identifiable_variants: id -> {content_hash: stored_id} for ids processed by this
+    # client (empty for ids seeded from the DB, whose content is unknown — those are
+    # skipped conservatively).
     _uploaded_identifiable_ids: Optional[Set[str]] = None
+    _identifiable_variants: Optional[Dict[str, Dict[str, str]]] = None
 
     def _seen_identifiable_ids(self) -> Set[str]:
         """Return the known-Identifiable-id cache, lazily seeded from the DB."""
         if self._uploaded_identifiable_ids is None:
             rows = self.execute_clause("MATCH (n:Identifiable) RETURN n.id AS id")
             self._uploaded_identifiable_ids = {r["id"] for r in rows if r["id"]}
+            self._identifiable_variants = {}
         return self._uploaded_identifiable_ids
 
     def _remove_all(self, batch_size=10000):
         super()._remove_all(batch_size)
-        # The cache now describes deleted nodes; force a reload on next upload.
+        # The caches now describe deleted nodes; force a reload on next upload.
         self._uploaded_identifiable_ids = None
+        self._identifiable_variants = None
 
     def _process_json_data(self, json_data: Dict[str, Any]) -> Tuple[List[Dict], Dict[str, List]]:
         """
@@ -155,24 +172,46 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
             apply_fixers(json_data)
 
         seen_ids = self._seen_identifiable_ids()
-        skipped = 0
+        skipped = collisions = 0
         for key, label in IDENTIFIABLE_KEYS.items():
             try:
                 for obj in json_data[key]:
                     obj_id = obj.get("id")
                     if obj_id is not None:
-                        if obj_id in seen_ids:
+                        content_hash = hashlib.sha256(
+                            json.dumps(obj, sort_keys=True).encode()
+                        ).hexdigest()
+                        variants = self._identifiable_variants.setdefault(obj_id, {})
+                        if obj_id not in seen_ids:
+                            # First occurrence: store under the original id.
+                            seen_ids.add(obj_id)
+                            variants[content_hash] = obj_id
+                        elif content_hash in variants:
+                            # Exact duplicate of an already-stored occurrence.
                             skipped += 1
-                            logger.info(f"Skipping duplicate {label} '{obj_id}' — already stored")
+                            logger.debug(f"Skipping duplicate {label} '{obj_id}' — identical content already stored")
                             continue
-                        seen_ids.add(obj_id)
+                        elif not variants:
+                            # Id was seeded from the DB; content unknown — skip conservatively.
+                            skipped += 1
+                            logger.debug(f"Skipping {label} '{obj_id}' — id already in database")
+                            continue
+                        else:
+                            # Id collision: same id, different content. Disambiguate.
+                            collisions += 1
+                            new_id = f"{obj_id}__collision-{len(variants) + 1}"
+                            variants[content_hash] = new_id
+                            seen_ids.add(new_id)
+                            obj = {**obj, "id": new_id, "original_id": obj_id, "id_collision": True}
+                            logger.debug(f"Id collision on {label} '{obj_id}' — storing as '{new_id}'")
                     child_nodes, child_rels = self._process_dict(obj)
                     nodes.extend(child_nodes)
                     self._merge_relationships(relationships, child_rels)
             except KeyError:
                 logger.info(f"Key '{key}' not found in the JSON file")
-        if skipped:
-            logger.info(f"Skipped {skipped} duplicate Identifiable(s) in this environment")
+        if skipped or collisions:
+            logger.info(f"Environment dedup: skipped {skipped} identical duplicate(s), "
+                        f"disambiguated {collisions} id collision(s)")
         return nodes, relationships
 
 
