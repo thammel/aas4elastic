@@ -119,6 +119,28 @@ AAS_NEO4J_MODEL_CONFIG = Neo4jModelConfig(
 class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
     node_names: Set[str] = set()
 
+    # Identifiable ids already stored in the DB or queued by this client's uploads.
+    # None means "reload from the DB on next use" (initial state, and after _remove_all).
+    # Backs the duplicate-Identifiable skip in _process_json_data: per the AAS spec an
+    # Identifiable id is globally unique, so a re-occurrence of an id across (or within)
+    # environment files is the *same* Identifiable and must not be stored twice — the
+    # identifiable_id uniqueness constraint would reject the second node anyway. Skipping
+    # at the environment level drops the whole duplicate subtree (first occurrence wins);
+    # References to the id keep resolving to the canonical node.
+    _uploaded_identifiable_ids: Optional[Set[str]] = None
+
+    def _seen_identifiable_ids(self) -> Set[str]:
+        """Return the known-Identifiable-id cache, lazily seeded from the DB."""
+        if self._uploaded_identifiable_ids is None:
+            rows = self.execute_clause("MATCH (n:Identifiable) RETURN n.id AS id")
+            self._uploaded_identifiable_ids = {r["id"] for r in rows if r["id"]}
+        return self._uploaded_identifiable_ids
+
+    def _remove_all(self, batch_size=10000):
+        super()._remove_all(batch_size)
+        # The cache now describes deleted nodes; force a reload on next upload.
+        self._uploaded_identifiable_ids = None
+
     def _process_json_data(self, json_data: Dict[str, Any]) -> Tuple[List[Dict], Dict[str, List]]:
         """
         Process JSON data into nodes and relationships.
@@ -132,14 +154,25 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
         if self.fix_on_import:
             apply_fixers(json_data)
 
+        seen_ids = self._seen_identifiable_ids()
+        skipped = 0
         for key, label in IDENTIFIABLE_KEYS.items():
             try:
                 for obj in json_data[key]:
+                    obj_id = obj.get("id")
+                    if obj_id is not None:
+                        if obj_id in seen_ids:
+                            skipped += 1
+                            logger.info(f"Skipping duplicate {label} '{obj_id}' — already stored")
+                            continue
+                        seen_ids.add(obj_id)
                     child_nodes, child_rels = self._process_dict(obj)
                     nodes.extend(child_nodes)
                     self._merge_relationships(relationships, child_rels)
             except KeyError:
                 logger.info(f"Key '{key}' not found in the JSON file")
+        if skipped:
+            logger.info(f"Skipped {skipped} duplicate Identifiable(s) in this environment")
         return nodes, relationships
 
 
