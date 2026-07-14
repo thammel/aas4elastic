@@ -129,20 +129,36 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
     # the second occurrence hits the identifiable_id uniqueness constraint and aborts
     # the whole upload.
     #
-    #   - identical content  -> skip the duplicate subtree (first occurrence wins);
-    #                           References keep resolving to the canonical node.
+    # For AssetAdministrationShells and Submodels, every re-occurrence is stored as its
+    # own node so per-file statistics stay faithful to the source files (a dataset that
+    # ships e.g. the same ContactInformation submodel in every file keeps one Submodel
+    # node per file, not one per dataset):
+    #
+    #   - identical content  -> store under '<id>__duplicate-<n>' with `original_id`
+    #                           and `id_duplicate` properties (n = occurrence index).
     #   - different content  -> id collision: store under '<id>__collision-<n>' with
     #                           `original_id` and `id_collision` properties, so the
     #                           data stays analyzable and the violation is queryable.
-    #                           References to the id resolve to the first node only.
+    #
+    # In both cases References to the id resolve to the first node only (the one that
+    # keeps the original id). Ids already present in the DB before this client's first
+    # upload are skipped conservatively (their content is unknown), which keeps a
+    # re-run of an upload against an already-populated DB from doubling everything.
+    #
+    # ConceptDescriptions are exempt: they are dictionary entries deduplicated by id
+    # (see `deduplicated_by_id`), so identical re-occurrences are skipped (first wins)
+    # and only differing content produces a '__collision-<n>' node, as before.
     #
     # _uploaded_identifiable_ids: ids known to be stored. None means "reload from the
     # DB on next use" (initial state, and after _remove_all).
     # _identifiable_variants: id -> {content_hash: stored_id} for ids processed by this
     # client (empty for ids seeded from the DB, whose content is unknown — those are
     # skipped conservatively).
+    # _identifiable_occurrences: id -> number of occurrences stored by this client,
+    # used to number the '__duplicate-<n>' / '__collision-<n>' suffixes.
     _uploaded_identifiable_ids: Optional[Set[str]] = None
     _identifiable_variants: Optional[Dict[str, Dict[str, str]]] = None
+    _identifiable_occurrences: Optional[Dict[str, int]] = None
 
     def _seen_identifiable_ids(self) -> Set[str]:
         """Return the known-Identifiable-id cache, lazily seeded from the DB."""
@@ -150,6 +166,7 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
             rows = self.execute_clause("MATCH (n:Identifiable) RETURN n.id AS id")
             self._uploaded_identifiable_ids = {r["id"] for r in rows if r["id"]}
             self._identifiable_variants = {}
+            self._identifiable_occurrences = {}
         return self._uploaded_identifiable_ids
 
     def _remove_all(self, batch_size=10000):
@@ -157,6 +174,7 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
         # The caches now describe deleted nodes; force a reload on next upload.
         self._uploaded_identifiable_ids = None
         self._identifiable_variants = None
+        self._identifiable_occurrences = None
 
     def _process_json_data(self, json_data: Dict[str, Any]) -> Tuple[List[Dict], Dict[str, List]]:
         """
@@ -172,7 +190,7 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
             apply_fixers(json_data)
 
         seen_ids = self._seen_identifiable_ids()
-        skipped = collisions = 0
+        skipped = duplicates = collisions = 0
         for key, label in IDENTIFIABLE_KEYS.items():
             try:
                 for obj in json_data[key]:
@@ -182,12 +200,16 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
                             json.dumps(obj, sort_keys=True).encode()
                         ).hexdigest()
                         variants = self._identifiable_variants.setdefault(obj_id, {})
+                        # ConceptDescriptions are dictionary entries deduplicated by id:
+                        # keep the collapse-to-one-node behaviour for them.
+                        dedup_by_id = label in self.model_config.deduplicated_by_id
                         if obj_id not in seen_ids:
                             # First occurrence: store under the original id.
                             seen_ids.add(obj_id)
                             variants[content_hash] = obj_id
-                        elif content_hash in variants:
-                            # Exact duplicate of an already-stored occurrence.
+                            self._identifiable_occurrences[obj_id] = 1
+                        elif dedup_by_id and content_hash in variants:
+                            # Exact duplicate of a stored dictionary entry — collapse.
                             skipped += 1
                             logger.debug(f"Skipping duplicate {label} '{obj_id}' — identical content already stored")
                             continue
@@ -197,20 +219,34 @@ class AASNeo4JClient(XmlToNeo4jImporter, JsonFromNeo4jExporter):
                             logger.debug(f"Skipping {label} '{obj_id}' — id already in database")
                             continue
                         else:
-                            # Id collision: same id, different content. Disambiguate.
-                            collisions += 1
-                            new_id = f"{obj_id}__collision-{len(variants) + 1}"
-                            variants[content_hash] = new_id
+                            # Re-occurrence of an id within this client's uploads. Store it
+                            # as its own node so per-file counts stay faithful to the source
+                            # files: identical content -> '__duplicate-<n>', differing
+                            # content -> '__collision-<n>' (a queryable id violation).
+                            n = self._identifiable_occurrences.get(obj_id, 1) + 1
+                            self._identifiable_occurrences[obj_id] = n
+                            identical = content_hash in variants
+                            if identical:
+                                duplicates += 1
+                                new_id = f"{obj_id}__duplicate-{n}"
+                                flag = "id_duplicate"
+                                logger.debug(f"Duplicate {label} '{obj_id}' — storing as '{new_id}'")
+                            else:
+                                collisions += 1
+                                new_id = f"{obj_id}__collision-{n}"
+                                flag = "id_collision"
+                                logger.debug(f"Id collision on {label} '{obj_id}' — storing as '{new_id}'")
+                            variants.setdefault(content_hash, new_id)
                             seen_ids.add(new_id)
-                            obj = {**obj, "id": new_id, "original_id": obj_id, "id_collision": True}
-                            logger.debug(f"Id collision on {label} '{obj_id}' — storing as '{new_id}'")
+                            obj = {**obj, "id": new_id, "original_id": obj_id, flag: True}
                     child_nodes, child_rels = self._process_dict(obj)
                     nodes.extend(child_nodes)
                     self._merge_relationships(relationships, child_rels)
             except KeyError:
                 logger.info(f"Key '{key}' not found in the JSON file")
-        if skipped or collisions:
-            logger.info(f"Environment dedup: skipped {skipped} identical duplicate(s), "
+        if skipped or duplicates or collisions:
+            logger.info(f"Environment dedup: skipped {skipped} duplicate(s) of dictionary entries, "
+                        f"stored {duplicates} identical duplicate(s) separately, "
                         f"disambiguated {collisions} id collision(s)")
         return nodes, relationships
 
