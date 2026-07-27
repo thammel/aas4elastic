@@ -57,8 +57,25 @@ from aas_mapping.aas_neo4j_adapter.base import BaseNeo4JClient
 # Constants
 # ---------------------------------------------------------------------------
 
-# AASd-002: idShort must match this pattern (requires ≥2 characters per spec regex)
-IDSHORT_PATTERN = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*[a-zA-Z0-9_]+$')
+# AASd-002 — the idShort pattern differs between metamodel versions.
+#
+#   V3.0 (IDTA-01001-3-0, aas-core-meta MatchesIdShort):
+#       ^[a-zA-Z][a-zA-Z0-9_]*$
+#       letters/digits/underscore only, no hyphen; a single letter IS valid.
+#
+#   V3.1 (IDTA-01001-3-1_final, schemas/xml/AAS.xsd):
+#       ^[a-zA-Z][a-zA-Z0-9_-]*[a-zA-Z0-9_]+$
+#       hyphens allowed (not trailing). The trailing '+' additionally forces a
+#       minimum length of 2, which is an unintended side effect of the
+#       relaxation requested in admin-shell-io/aas-specs-metamodel#295 — the
+#       editors state in that thread that 1-letter idShorts are valid and have
+#       been since V3.0RC02. IDTA's own V3.1 templates violate it (X/Y/Z
+#       coordinate properties). The published pattern is applied verbatim.
+IDSHORT_PATTERN_V30 = re.compile(r'^[a-zA-Z][a-zA-Z0-9_]*$')
+IDSHORT_PATTERN_V31 = re.compile(r'^[a-zA-Z][a-zA-Z0-9_-]*[a-zA-Z0-9_]+$')
+
+# Backwards-compatible alias (previously the only pattern, V3.1 semantics).
+IDSHORT_PATTERN = IDSHORT_PATTERN_V31
 
 # AASd-125: all keys following the first key in a ModelReference must be FragmentKeys
 FRAGMENT_KEYS: frozenset[str] = frozenset({
@@ -174,6 +191,11 @@ class AASConstraintChecker:
     """
 
     def __init__(self, client: BaseNeo4JClient, version: str | None = None):
+        """
+        :param version: metamodel version, e.g. ``"3.0"`` or ``"3.1"``. Selects the
+            version-specific AASd-002 idShort pattern and gates the V3.0-only
+            constraints.
+        """
         self._client = client
         self._version = version
 
@@ -220,8 +242,19 @@ class AASConstraintChecker:
     # AASd-002 — idShort format
     # ------------------------------------------------------------------
 
+    def _idshort_pattern(self) -> "re.Pattern[str]":
+        """Return the AASd-002 pattern applicable to the configured version.
+
+        Defaults to the V3.1 pattern when the version is unknown, preserving the
+        previous behaviour.
+        """
+        if self._version is not None and str(self._version).startswith("3.0"):
+            return IDSHORT_PATTERN_V30
+        return IDSHORT_PATTERN_V31
+
     def _check_aasd002(self) -> list[ConstraintViolation]:
-        """idShort of Referables must match ^[a-zA-Z][a-zA-Z0-9_-]*[a-zA-Z0-9_]+$."""
+        """idShort of Referables must match the version-specific AASd-002 pattern."""
+        pattern = self._idshort_pattern()
         query = """
         MATCH (n:Referable)
         WHERE n.idShort IS NOT NULL
@@ -230,14 +263,16 @@ class AASConstraintChecker:
         violations = []
         for r in self._run(query):
             id_short = r["id_short"]
-            if not IDSHORT_PATTERN.match(id_short):
+            if not pattern.match(id_short):
                 violations.append(self._v(
                     "AASd-002",
-                    f"idShort {id_short!r} does not match the required pattern",
+                    f"idShort {id_short!r} does not match the required pattern "
+                    f"{pattern.pattern}",
                     node_id=r["node_id"],
                     node_labels=list(r["node_labels"]),
                     field="idShort",
                     value=id_short,
+                    pattern=pattern.pattern,
                 ))
         return violations
 
